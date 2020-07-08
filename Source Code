@@ -1,0 +1,90 @@
+% Import MRIO table, sectoral carbon emission account and project inventory
+load('CO2.mat');% global sectoral CO2 emission inventory
+load('CV_CO2_Chinese.mat');% Chinese specific sectoral CV by our own estimation 
+IO=load('2015.mat');   % the 2015 MRIO table
+load('Line.mat'); % Inputs inventory of each transmission line projects 
+ 
+ 
+% extract the 2015 data from the whole dataset
+Q_CO2_combustion=CO2.CO2_2015(1,:);
+Q_CO2_noncombustion=sum(CO2.CO2_2015(2:3,:),1);
+Q_RSD_CO2_combustion_China=CV_CO2_Chinese.CV_2015; 
+ 
+% extract the elements in MRIO table
+T=IO.Z; % the intermediate matric
+Y=IO.Y; % the final demand matric
+Y(Y<0)=0;
+X=sum(T,2)+sum(Y,2); 
+NMC=10000;  
+NI=163;  
+GHG_intensity_China=zeros(NMC,NI);
+n=1;
+ 
+ 
+% Detailed CV and their specification Table xxx
+T_max=max(max(T));
+T_min=min(min(T+1e-10));
+b=log(0.5/0.01)/log(T_min/T_max);
+a=0.5/(T_min^b);
+T_RSD=a*(T+1e-10).^b; 
+Y_RSD=0.1;
+ 
+% For combustion CO2, OECD 10%; non-OECD 20%; for China, we carry out a specific CV evaluation
+Q_RSD_CO2_combustion=zeros(size(Q_CO2_combustion)); 
+OECD=[1 2 5:12 14:16 18 21:23 25:30 32 33 36 38 39 40 42]; 
+for i=1:size(OECD,2)
+    for j=1:NI
+     Q_RSD_CO2_combustion(1,(OECD(1,i)-1)*NI+j)=0.1;
+    end
+end
+Q_RSD_CO2_combustion(Q_RSD_CO2_combustion==0)=0.2;
+ Q_RSD_CO2_combustion(1,4891:5053)=Q_RSD_CO2_combustion_China;
+    
+Q_RSD_CO2_noncombustion=zeros(size(Q_CO2_noncombustion)); 
+OECD=[1 2 5:12 14:16 18 21:23 25:30 32 33 36 38 39 40 42]; 
+for i=1:size(OECD,2)
+    for j=1:NI
+     Q_RSD_CO2_noncombustion(1,(OECD(1,i)-1)*NI+j)=0.05;
+    end
+end
+Q_RSD_CO2_noncombustion(Q_RSD_CO2_noncombustion==0)=0.1;
+ 
+% Monte Carlo simulation for embodied emission intensity uncertainties for 163 sectors in China  
+logT_SD=log10(1+T_RSD);
+logY_SD=log10(1+Y_RSD);
+logQ_SD_CO2_combustion=log10(1+Q_RSD_CO2_combustion);
+logQ_SD_CO2_noncombustion=log10(1+Q_RSD_CO2_noncombustion);
+ 
+for mc=1:NMC
+    Tp=10.^(log10(T+1e-10)+logT_SD.*randn(size(T)));
+    Yp=10.^(log10(Y+1e-10)+logY_SD.*randn(size(Y)));
+    Qp_CO2_combustion=10.^(log10(Q_CO2_combustion+1e-10)+logQ_SD_CO2_combustion.*randn(size(Q_CO2_combustion)));
+    Qp_CO2_noncombustion=10.^(log10(Q_CO2_noncombustion+1e-10)+logQ_SD_CO2_noncombustion.*randn(size(Q_CO2_noncombustion)));
+    Qp_CH4=10.^(log10(Q_CH4+1e-10)+logQ_SD_CH4.*randn(size(Q_CH4)));
+    Qp_N2O=10.^(log10(Q_N2O+1e-10)+logQ_SD_N2O.*randn(size(Q_N2O)));
+    Qp=Qp_CO2_combustion+Qp_CO2_noncombustion+21*Qp_CH4+310*Qp_N2O;
+    Xp1=sum(Tp,2)+sum(Yp,2);
+ if sum(abs(Xp1-X))/sum(X)<=0.04
+    Xp=diag(Xp1);
+    GHG_intensity_global=Qp/(Xp-Tp);
+    GHG_intensity_China(n,:)=GHG_intensity_global(1,4891:5053);
+    n=n+1;
+ end
+end
+ 
+GHG_intensity_Line=GHG_intensity_China(:,[72 85 86 88 91 93 107 113 129 135 136 137 161]); % select required sector for line project
+CV_inventory=0.1; % CV for the input inventory 
+GHG_line220=zeros(NMC,41);
+NMC=10000;
+ 
+ 
+for i=1:NMC
+Line_220p=10.^(log10(Line.kv220)+log10(1+CV_inventory).*randn(size(Line.kv220)));
+GHG_line220p1=sum(GHG_intensity_Line(i,:).*Line_220p,2);
+GHG_line220(i,:)=GHG_line220p1'; 
+End
+ 
+% Estimate the uncertainties at the confidence level of 95% 
+Line220_CI951=prctile(GHG_line220,[2.5 97.5]);
+Line220_CI95(1,:)=(mean(GHG_line220)-Line220_CI951(1,:))./mean(GHG_line220);
+Line220_CI95(2,:)=(Line220_CI951(2,:)-mean(GHG_line220))./mean(GHG_line220);
